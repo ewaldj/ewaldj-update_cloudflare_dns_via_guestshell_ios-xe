@@ -1,0 +1,115 @@
+! -------------------------------------------------------------------
+! Tested on Cisco router C1100 with version 17.9.x / 17.6.x 
+! -------------------------------------------------------------------
+
+! -------------------------------------------------------------------
+! INSTALLING GUESTSHELL 
+! -------------------------------------------------------------------
+! 1.) download Guestshell tar file from 
+!     https://software.cisco.com/download/home/286315006/type/282046477/release/Cupertino-17.9.1a
+!     https://software.cisco.com/download/home/286319772/type/282046477/release/Bengaluru-17.6.1a 
+!     https://developer.cisco.com/docs/iox/#!iox-resource-downloads/downloads
+! 
+! 2.) copy the TAR file to the flash of the router 
+! 
+! 3.) install guestshell 
+!      app-hosting install appid guestshell package flash:guestshell.17.09.01a.tar
+!      check the status via "show app-hosting list" 
+! -------------------------------------------------------------------
+
+! -------------------------------------------------------------------
+! IOS-XE CONFIG GUESTSHELL 
+! -------------------------------------------------------------------
+
+conf t
+iox
+
+app-hosting appid guestshell
+ app-vnic gateway1 virtualportgroup 0 guest-interface 0
+  guest-ipaddress 192.168.35.2 netmask 255.255.255.0
+ app-default-gateway 192.168.35.1 guest-interface 0
+ name-server0 1.1.1.1
+ name-server1 1.0.0.1
+
+interface VirtualPortGroup0
+ desc ## guestshell interface 
+ ip address 192.168.35.1 255.255.255.0
+ no ip redirects
+ no ip proxy-arp
+ ip nat insideip nat inside
+
+do guestshell enable
+
+object-group network OBG-NAT 
+  192.168.35.0 255.255.255.0
+
+object-group network OBG-RFC1918 
+ 10.0.0.0 255.0.0.0
+ 172.16.0.0 255.240.0.0
+ 192.168.0.0 255.255.0.0
+
+route-map RM-NAT deny 10 
+ match ip address ACL-NONAT
+route-map RM-NAT permit 20 
+ match ip address ACL-NAT
+
+! change the outside "Cellular0/2/0 to your outside interface !! 
+interface Cellular0/2/0
+ ip nat outside
+
+ip nat inside source route-map RM-NAT interface Cellular0/2/0 overload
+
+! -------------------------------------------------------------------
+
+! -------------------------------------------------------------------
+! INSTALL REQUEST VIA PIP3 IN GUESTSHELL (PYTHON)
+! -------------------------------------------------------------------
+!
+! connect to guestshell (via ios-xe cli )
+guestshell 
+
+! install requests in the guestshell (linux not ios-xe)
+sudo pip3 install requests
+
+! exit 
+! -------------------------------------------------------------------
+
+! -------------------------------------------------------------------
+! CONFIGURE "cf-update.py" 
+! -------------------------------------------------------------------
+! Edit the cf-update-v2.py and change the following variables at the end of the file 
+!     * auth_email
+!     * auth_key 
+!     * domain 
+!     * hostname 
+! Then copy the file to the router in the folder /guest-share/ 
+! -------------------------------------------------------------------
+
+! -------------------------------------------------------------------
+! TEST THE SCRIPT (via ios-xe cli)   
+! -------------------------------------------------------------------
+
+guestshell run python3 /bootflash/guest-share/cf-update-v2.py
+
+! SAMPLE OUTPUT 
+! RT-LTE#guestshell run python3 /bootflash/guest-share/cf-update-v2.py
+! Updating DNS record: servername.sample-domain.com
+! DNS record updated successfully
+! FQDN:servername.sample-domain.com
+! IP:  11.20.11.30
+
+! -------------------------------------------------------------------
+! CONFIGURE EEM SCRIPT TO UPDATE THE RECORD EVERY 5 MINUTES  
+! -------------------------------------------------------------------
+conf t
+
+event manager applet UPDATE-CF-DNS-RECORD authorization bypass
+ event timer cron cron-entry "*/5 * * * *"
+ action 1.0 cli command "enable"
+ action 2.0 cli command "guestshell run python3 /bootflash/guest-share/cf-update-v2.py"
+end 
+
+! to debug the eem you can use 
+deb event manager action cli 
+! -------------------------------------------------------------------
+
